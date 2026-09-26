@@ -1,6 +1,7 @@
 """
 Lab 11 — Helper Utilities
 """
+import asyncio
 from core.config import get_llm_provider, PROVIDER_OPENROUTER  # noqa: F401
 from core.openai_runtime import OpenAIRunner
 
@@ -44,13 +45,30 @@ async def chat_with_agent(agent, runner, user_message: str, session_id=None):
         parts=[types.Part.from_text(text=user_message)],
     )
 
-    final_response = ""
-    async for event in runner.run_async(
-        user_id=user_id, session_id=session.id, new_message=content
-    ):
-        if hasattr(event, "content") and event.content and event.content.parts:
-            for part in event.content.parts:
-                if hasattr(part, "text") and part.text:
-                    final_response += part.text
+    for attempt in range(4):
+        try:
+            final_response = ""
+            async for event in runner.run_async(
+                user_id=user_id, session_id=session.id, new_message=content
+            ):
+                if hasattr(event, "content") and event.content and event.content.parts:
+                    for part in event.content.parts:
+                        if hasattr(part, "text") and part.text:
+                            final_response += part.text
 
-    return final_response, session
+            return final_response, session
+        except Exception as e:
+            if attempt < 4 and any(
+                keyword in str(e).lower()
+                for keyword in ["503", "unavailable", "high demand", "resourceexhausted", "quota", "rate"]
+            ):
+                await asyncio.sleep(5 * (attempt + 1))
+                try:
+                    session = await runner.session_service.create_session(
+                        app_name=app_name, user_id=user_id
+                    )
+                except Exception:
+                    pass
+                continue
+            raise e
+

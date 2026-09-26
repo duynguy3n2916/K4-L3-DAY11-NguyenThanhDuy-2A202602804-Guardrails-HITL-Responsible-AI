@@ -51,14 +51,34 @@ def detect_injection(user_input: str) -> InputStatus:
     Returns:
         ``"BLOCK"`` if injection detected (chặn), ``"ALLOW"`` otherwise (cho qua).
     """
+    import unicodedata
+
+    # Normalize Unicode and remove zero-width characters used for obfuscation
+    zero_width = "\u200b\u200c\u200d\ufeff\u2060"
+    normalized = unicodedata.normalize("NFKC", user_input or "")
+    clean_input = normalized.translate(str.maketrans("", "", zero_width))
+
     INJECTION_PATTERNS = [
         # TODO: Add at least 5 regex patterns
         # Example:
         # r"ignore (all )?(previous|above) instructions",
+        r"ignore\s+(all\s+)?(previous|above|prior)?\s*instructions?",
+        r"disregard\s+(all\s+)?(previous|above|prior)?\s*(instructions?|rules?)",
+        r"you\s+are\s+now\b",
+        r"\bDAN\b",
+        r"system\s+prompt",
+        r"reveal\s+(your\s+)?(instructions?|prompt|password|api\s*key)",
+        r"reveal\s+(the\s+)?(internal\s+)?password",
+        r"pretend\s+(you\s+are|to\s+be)",
+        r"act\s+as\s+(a\s+|an\s+)?unrestricted",
+        r"override\s+(your\s+)?(system\s+)?(prompt|instructions?)",
+        r"show\s+(me\s+)?(your\s+)?(system\s+)?(prompt|instructions?|config)",
+        r"bỏ\s+qua\s+(mọi\s+)?hướng\s+dẫn",
+        r"tiết\s+lộ\s+(mật\s+khẩu|api|system\s*prompt)",
     ]
 
     for pattern in INJECTION_PATTERNS:
-        if re.search(pattern, user_input, re.IGNORECASE):
+        if re.search(pattern, clean_input, re.IGNORECASE):
             return "BLOCK"
     return "ALLOW"
 
@@ -91,7 +111,20 @@ def topic_filter(user_input: str) -> InputStatus:
     # 2. If input doesn't contain any allowed topic -> return "BLOCK"
     # 3. Otherwise -> return "ALLOW"
 
-    pass  # Replace with your implementation
+    # Normalize Vietnamese accents to compare with unaccented ALLOWED_TOPICS
+    import unicodedata
+    nfkd = unicodedata.normalize('NFKD', input_lower)
+    unaccented = "".join(c for c in nfkd if not unicodedata.combining(c)).replace("đ", "d").replace("Đ", "D")
+
+    for blocked in BLOCKED_TOPICS:
+        if blocked in input_lower or blocked in unaccented:
+            return "BLOCK"
+
+    if not (any(allowed in input_lower for allowed in ALLOWED_TOPICS) or
+            any(allowed in unaccented for allowed in ALLOWED_TOPICS)):
+        return "BLOCK"
+
+    return "ALLOW"
 
 
 # ============================================================
@@ -151,7 +184,19 @@ class InputGuardrailPlugin(base_plugin.BasePlugin):
         #    - If "BLOCK": increment blocked_count, return self._block_response("...")
         # 3. If both return "ALLOW": return None (let message through)
 
-        pass  # Replace with your implementation
+        if detect_injection(text) == "BLOCK":
+            self.blocked_count += 1
+            return self._block_response(
+                "I cannot process that request. I only help with VinBank banking questions."
+            )
+
+        if topic_filter(text) == "BLOCK":
+            self.blocked_count += 1
+            return self._block_response(
+                "I'm a VinBank assistant and can only help with banking-related questions."
+            )
+
+        return None
 
 
 # ============================================================
